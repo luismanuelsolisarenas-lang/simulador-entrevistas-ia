@@ -1,7 +1,8 @@
 import os
 import streamlit as st
 from google import genai
-from google.genai import types
+from google.genai import types, errors
+from streamlit.errors import StreamlitSecretNotFoundError
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
@@ -15,7 +16,18 @@ st.write("Demuestra tus habilidades respondiendo exactamente **3 preguntas técn
 
 # --- 2. OBTENCIÓN DE LA API KEY ---
 # Busca la API key en las variables del sistema o en st.secrets de Streamlit Cloud
-api_key = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY")
+def get_setting(name, default=None):
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        return st.secrets.get(name, default)
+    except StreamlitSecretNotFoundError:
+        return default
+
+
+api_key = get_setting("GEMINI_API_KEY")
+MODEL = get_setting("GEMINI_MODEL", "gemini-2.5-flash")
 
 if not api_key:
     st.error("⚠️ No se detectó la clave GEMINI_API_KEY. Configúrala en los Secrets de Streamlit o como variable de entorno.")
@@ -23,6 +35,32 @@ if not api_key:
 
 # Inicialización del cliente de Gemini
 client = genai.Client(api_key=api_key)
+
+
+def generate_content(**kwargs):
+    """Muestra un diagnóstico seguro y permite reintentar la solicitud pendiente."""
+    try:
+        response = client.models.generate_content(model=MODEL, **kwargs)
+        if response.text and response.text.strip():
+            return response
+        st.warning("Gemini no devolvió texto. Puedes reintentar la solicitud.")
+    except errors.APIError as exc:
+        messages = {
+            400: "Solicitud inválida. Revisa la validez de la clave y la configuración de la API en Google AI Studio.",
+            401: "No se pudo autenticar la solicitud. Revisa GEMINI_API_KEY en los Secrets de Streamlit.",
+            403: "Acceso denegado. Revisa los permisos y las restricciones de la clave en Google AI Studio.",
+            404: "No se encontró el recurso o modelo. Revisa GEMINI_MODEL y los modelos disponibles para tu proyecto.",
+            429: "Se alcanzó un límite de solicitudes o cuota. Revisa la cuota en Google AI Studio antes de reintentar.",
+            500: "Google tuvo un error interno. Intenta de nuevo más tarde.",
+            503: "Gemini está temporalmente saturado o no disponible. Intenta de nuevo más tarde.",
+        }
+        # No mostrar el mensaje original: puede contener datos de la solicitud.
+        st.error(f"Gemini · HTTP {exc.code}: " + messages.get(
+            exc.code, "La API rechazó la solicitud. Revisa la configuración de tu proyecto."
+        ))
+    if st.button("Reintentar solicitud"):
+        st.rerun()
+    st.stop()
 
 # --- 3. GESTIÓN DEL ESTADO CON ST.SESSION_STATE ---
 if "role" not in st.session_state:
@@ -80,8 +118,7 @@ REGLAS STRICTAS:
 if len(st.session_state.messages) == 0:
     first_prompt = f"Hola, bienvenido a la entrevista para {st.session_state.role}. Inicia la entrevista presentándote brevemente y haciendo la Pregunta 1 de 3."
     
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
+    response = generate_content(
         contents=first_prompt,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -118,8 +155,7 @@ def generate_final_report():
     """
     
     with st.spinner("Evaluando tus 3 respuestas y generando el dictamen final..."):
-        report_response = client.models.generate_content(
-            model="gemini-2.5-flash",
+        report_response = generate_content(
             contents=report_prompt,
             config=types.GenerateContentConfig(
                 system_instruction="Eres un Director de Tecnología emitiendo una evaluación final imparcial y técnica.",
@@ -136,13 +172,19 @@ if st.session_state.interview_complete and st.session_state.final_report:
 
 # --- 10. ENTRADA DE TEXTO Y FLUJO CONVERSACIONAL ---
 if not st.session_state.interview_complete:
-    user_input = st.chat_input("Escribe tu respuesta técnica aquí...")
+    pending_response = st.session_state.messages[-1]["role"] == "user"
+    user_input = st.chat_input(
+        "Escribe tu respuesta técnica aquí...",
+        disabled=pending_response or st.session_state.turn_count >= 3
+    )
     
     if user_input:
         # Guardar respuesta del usuario e incrementar contador
         st.session_state.messages.append({"role": "user", "content": user_input})
         st.session_state.turn_count += 1
-        
+        st.rerun()
+
+    if pending_response:
         # Evaluar si se alcanzó el límite de 3 respuestas
         if st.session_state.turn_count >= 3:
             generate_final_report()
@@ -159,8 +201,7 @@ if not st.session_state.interview_complete:
                 )
             
             with st.spinner("Analizando tu respuesta..."):
-                next_q_response = client.models.generate_content(
-                    model="gemini-2.5-flash",
+                next_q_response = generate_content(
                     contents=contents,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
