@@ -37,10 +37,37 @@ if not api_key:
 client = genai.Client(api_key=api_key)
 
 
+def choose_available_model():
+    """Consulta a Google antes de ofrecer un modelo alternativo."""
+    st.write("Modelo solicitado:")
+    st.code(st.session_state.get("model_override", MODEL), language=None)
+    try:
+        available = sorted({
+            model.name.removeprefix("models/")
+            for model in client.models.list()
+            if model.name and "generateContent" in (model.supported_actions or [])
+        })
+    except errors.APIError as exc:
+        st.warning(f"No se pudo consultar la lista de modelos (HTTP {exc.code}).")
+        return
+    if not available:
+        st.warning("Google no devolvió modelos compatibles con generateContent para esta clave.")
+        return
+    selected = st.selectbox("Modelos disponibles: selecciona uno de texto", available)
+    st.caption("La lista indica compatibilidad con generateContent; la cuota y el acceso a generación pueden variar.")
+    st.write("Para guardar tu elección, añade esta línea a los Secrets de Streamlit:")
+    st.code(f'GEMINI_MODEL = "{selected}"', language="toml")
+    if st.button("Usar este modelo y reintentar"):
+        st.session_state.model_override = selected
+        st.rerun()
+
+
 def generate_content(**kwargs):
     """Muestra un diagnóstico seguro y permite reintentar la solicitud pendiente."""
     try:
-        response = client.models.generate_content(model=MODEL, **kwargs)
+        response = client.models.generate_content(
+            model=st.session_state.get("model_override", MODEL), **kwargs
+        )
         if response.text and response.text.strip():
             return response
         st.warning("Gemini no devolvió texto. Puedes reintentar la solicitud.")
@@ -58,6 +85,8 @@ def generate_content(**kwargs):
         st.error(f"Gemini · HTTP {exc.code}: " + messages.get(
             exc.code, "La API rechazó la solicitud. Revisa la configuración de tu proyecto."
         ))
+        if exc.code == 404:
+            choose_available_model()
     if st.button("Reintentar solicitud"):
         st.rerun()
     st.stop()
