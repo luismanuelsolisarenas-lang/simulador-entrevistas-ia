@@ -40,7 +40,7 @@ API_KEY = get_setting("GEMINI_API_KEY")
 
 DEFAULT_MODEL = get_setting(
     "GEMINI_MODEL",
-    "gemini-2.5-flash"
+    "gemini-3.8-flash"
 )
 
 if not API_KEY:
