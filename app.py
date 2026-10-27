@@ -21,7 +21,7 @@ st.write(
 )
 
 # ==========================================
-# 2. CONFIGURACIÓN DE GEMINI
+# 2. CONFIGURACIÓN DE GEMINI 3.8 FLASH
 # ==========================================
 
 def get_setting(name, default=None):
@@ -50,8 +50,13 @@ if not API_KEY:
     )
     st.stop()
 
-client = genai.Client(api_key=API_KEY)
-
+# Cliente de Gemini con tiempo de espera.
+client = genai.Client(
+    api_key=API_KEY,
+    http_options=types.HttpOptions(
+        timeout=30000
+    )
+)
 
 # ==========================================
 # 3. CONTROL DE ESTADO
@@ -72,11 +77,11 @@ if "final_report" not in st.session_state:
 if "role" not in st.session_state:
     st.session_state.role = "Desarrollador Python Junior"
 
-if "model_override" not in st.session_state:
-    st.session_state.model_override = None
-
 if "interview_started" not in st.session_state:
     st.session_state.interview_started = False
+
+if "model_override" not in st.session_state:
+    st.session_state.model_override = None
 
 
 # ==========================================
@@ -91,8 +96,9 @@ def current_model():
 
 
 def choose_available_model():
+
     st.info(
-        "Vamos a consultar los modelos disponibles "
+        "Consultando modelos disponibles "
         "para tu clave de Gemini."
     )
 
@@ -111,8 +117,7 @@ def choose_available_model():
 
         if not available:
             st.warning(
-                "No se encontraron modelos Gemini "
-                "compatibles con generateContent."
+                "No se encontraron modelos compatibles."
             )
             return
 
@@ -130,19 +135,18 @@ def choose_available_model():
             st.session_state.model_override = selected
             st.rerun()
 
-        st.caption(
-            "Que un modelo aparezca en esta lista "
-            "no garantiza que tenga cuota disponible."
-        )
-
     except errors.APIError as exc:
         st.error(
             f"No se pudo consultar la lista de modelos. "
-            f"Código HTTP: {exc.code}"
+            f"HTTP {exc.code}"
         )
 
 
-def generate_content(contents, system_instruction, temperature=0.7):
+def generate_content(
+    contents,
+    system_instruction,
+    temperature=0.7
+):
 
     try:
         response = client.models.generate_content(
@@ -167,23 +171,18 @@ def generate_content(contents, system_instruction, temperature=0.7):
             f"Error de Gemini: HTTP {exc.code}"
         )
 
-        # Diagnóstico detallado para resolver
-        # problemas de modelos y versiones de API.
         if exc.code == 404:
             st.error(
-                "El modelo solicitado no se encontró "
-                "o no está disponible para esta solicitud."
+                "El modelo solicitado no está disponible."
             )
 
             st.write("Modelo utilizado:")
             st.code(current_model())
 
-            # Mostrar únicamente información de diagnóstico.
-            # No mostrar claves de API.
-            detail = str(exc)
-
-            if API_KEY:
-                detail = detail.replace(API_KEY, "[CLAVE_OCULTA]")
+            detail = str(exc).replace(
+                API_KEY,
+                "[CLAVE_OCULTA]"
+            )
 
             st.code(detail, language=None)
 
@@ -191,26 +190,32 @@ def generate_content(contents, system_instruction, temperature=0.7):
 
         elif exc.code == 429:
             st.warning(
-                "Se alcanzó el límite de solicitudes "
-                "o la cuota disponible de Gemini."
+                "Se alcanzó la cuota de solicitudes "
+                "de Gemini. Intenta más tarde."
+            )
+
+        elif exc.code == 503:
+            st.warning(
+                "Gemini está temporalmente saturado "
+                "o no disponible. Intenta nuevamente "
+                "en unos momentos."
             )
 
         elif exc.code in (400, 401, 403):
             st.warning(
-                "Revisa la configuración, los permisos "
-                "y la clave de API en Google AI Studio."
+                "Revisa tu clave de API, permisos "
+                "y configuración de Gemini."
             )
 
         else:
             st.warning(
-                "Gemini rechazó la solicitud. "
-                "Revisa la configuración del proyecto."
+                "Gemini rechazó la solicitud."
             )
 
     except Exception as exc:
         st.error(
-            "Ocurrió un error inesperado al "
-            "comunicarse con Gemini."
+            "Ocurrió un error inesperado "
+            "al comunicarse con Gemini."
         )
         st.caption(type(exc).__name__)
 
@@ -515,9 +520,6 @@ if (
         st.rerun()
 
     if pending_response:
-
-        # Después de la tercera respuesta,
-        # generar directamente el reporte.
 
         if st.session_state.turn_count >= 3:
 
