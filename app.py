@@ -62,8 +62,6 @@ client = genai.Client(
         )
     )
 )
-    )
-)
 
 # ==========================================
 # 3. CONTROL DE ESTADO
