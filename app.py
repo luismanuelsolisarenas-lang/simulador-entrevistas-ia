@@ -47,7 +47,7 @@ def choose_available_model():
             for model in client.models.list()
             if model.name and "generateContent" in (model.supported_actions or [])
         })
-    except errors.APIError as exc:
+    except errors.APIError as exc:     st.error(f"Detalle del error de Gemini: {exc}")     messages = {
         st.warning(f"No se pudo consultar la lista de modelos (HTTP {exc.code}).")
         return
     if not available:
